@@ -5,18 +5,7 @@ import matplotlib.patches as patches
 from matplotlib.colors import hsv_to_rgb
 from matplotlib.font_manager import FontProperties
 import numpy as np
-import os
-import subprocess
 
-# フォントのダウンロードと設定
-FONT_URL = "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00301.zip"
-FONT_ZIP = "/tmp/ipaexg00301.zip"
-FONT_PATH = "/tmp/ipaexg00301/ipaexg.ttf"
-
-if not os.path.exists(FONT_PATH):
-    subprocess.run(["wget", "-q", "-O", FONT_ZIP, FONT_URL])
-    subprocess.run(["unzip", "-o", FONT_ZIP, "-d", "/tmp/"])
-font_prop = FontProperties(fname=FONT_PATH)
 
 # スキル定義
 skills = [
@@ -45,78 +34,87 @@ skills = [
     {"Name": "アルマゲドン", "CT": 4.75, "Effect Time": None}
 ]
 
-# 色と重複判定
+# 色と重複処理用
 def generate_distinct_colors(n):
     hues = np.linspace(0, 1, n + 1)[:-1]
     return [hsv_to_rgb((h, 0.6, 0.9)) for h in hues]
 
-def time_overlap(start1, end1, start2, end2):
-    return max(0, min(end1, end2) - max(start1, start2))
+def time_overlap(a1, b1, a2, b2):
+    return max(0, min(b1, b2) - max(a1, a2))
 
-# 描画関数
-def plot_skills(skills, total_time=30, mode="ranking event"):
+# プロット関数（英語エイリアス）
+def plot_skills_alias(skills, total_time=30, mode="ranking event"):
     fig, ax = plt.subplots(figsize=(12, 6))
-    y_labels = [s["Name"] for s in skills]
     colors = generate_distinct_colors(len(skills))
     effect_ranges = [[] for _ in skills]
     instant_times = {}
     bar_height = 0.3
 
-    for i, skill in enumerate(skills):
-        ct = float(skill['CT'])
-        effect_time = float(skill.get('Effect Time') or 0)
-        color = colors[i]
-        current_time = 0
+    aliases = [f"Skill {i+1}" for i in range(len(skills))]
 
-        while current_time <= total_time:
-            start = current_time + ct if mode == "ranking event" else current_time
-            end = start + effect_time
+    for i, skill in enumerate(skills):
+        ct = float(skill["CT"])
+        et = float(skill.get("Effect Time") or 0)
+        color = colors[i]
+        t = 0
+        while t <= total_time:
+            start = t + ct if mode == "ranking event" else t
+            end = start + et
             if start > total_time:
                 break
-
-            if effect_time > 0:
-                ax.add_patch(patches.Rectangle((start, i - bar_height / 2), end - start, bar_height, color=color, alpha=0.6))
+            if et > 0:
+                ax.add_patch(patches.Rectangle((start, i - bar_height/2), end - start, bar_height,
+                                               color=color, alpha=0.6))
                 effect_ranges[i].append((start, end))
             else:
                 key = round(start, 2)
                 instant_times.setdefault(key, []).append(i)
+            t += ct
 
-            current_time += ct
-
+    # overlap bars
     for i in range(len(skills)):
-        for j in range(i + 1, len(skills)):
-            for si, ei in effect_ranges[i]:
-                for sj, ej in effect_ranges[j]:
-                    if time_overlap(si, ei, sj, ej):
-                        ov_start = max(si, sj)
-                        ov_end = min(ei, ej)
+        for j in range(i+1, len(skills)):
+            for s1, e1 in effect_ranges[i]:
+                for s2, e2 in effect_ranges[j]:
+                    if time_overlap(s1, e1, s2, e2):
+                        o_s = max(s1, s2)
+                        o_e = min(e1, e2)
                         for y in [i, j]:
-                            ax.add_patch(patches.Rectangle((ov_start, y - bar_height / 2), ov_end - ov_start, bar_height, color='red', alpha=0.8))
+                            ax.add_patch(patches.Rectangle((o_s, y-bar_height/2), o_e-o_s, bar_height,
+                                                           color='red', alpha=0.8))
 
-    for t, indices in instant_times.items():
-        for i in indices:
-            overlaps_effect = any(start <= t <= end for j, r in enumerate(effect_ranges) if j != i for start, end in r)
-            color = 'red' if len(indices) > 1 else 'blue'
-            linestyle = ':' if overlaps_effect else '-'
-            ax.plot([t, t], [i - bar_height / 2, i + bar_height / 2], color=color, linestyle=linestyle, linewidth=1.8, alpha=0.9)
+    # instant skill lines
+    for key, idxs in instant_times.items():
+        for i in idxs:
+            overlaps = any(s <= key <= e for j, rng in enumerate(effect_ranges) if j != i for s, e in rng)
+            color = 'red' if len(idxs) > 1 else 'blue'
+            linestyle = ':' if overlaps else '-'
+            ax.plot([key, key], [i-bar_height/2, i+bar_height/2],
+                    color=color, linestyle=linestyle, linewidth=1.8, alpha=0.9)
 
     ax.set_ylim(-1, len(skills))
     ax.set_xlim(0, total_time)
     ax.set_yticks(range(len(skills)))
-    ax.set_yticklabels(y_labels, fontproperties=font_prop)
-    ax.set_xlabel("時間（秒）", fontproperties=font_prop)
-    ax.set_title(f"スキルCTタイムライン（{mode}）", fontproperties=font_prop)
+    ax.set_yticklabels(aliases)
+    ax.set_xlabel("Time (sec)")
+    ax.set_title(f"Skill CT Timeline ({mode})")
     ax.grid(axis='x', linestyle='--', alpha=0.6)
     st.pyplot(fig)
 
-# Streamlit UI
-st.title("スキルクールタイム比較ツール")
-mode = st.radio("モードを選択:", ["ranking event", "normal stage"])
-total_time = st.selectbox("比較時間:", [30, 40])
-selected_names = st.multiselect("表示するスキルを選択:", [s["Name"] for s in skills])
-selected_skills = [s for s in skills if s["Name"] in selected_names]
+    st.markdown("**Legend mapping:**")
+    for i, skill in enumerate(skills):
+        st.markdown(f"- **Skill {i+1}** = {skill['Name']}")
 
-if selected_skills:
-    plot_skills(selected_skills, total_time, mode)
+# Streamlit UI
+st.title("Skill CT Timeline Comparison")
+mode = st.radio("Mode:", ["ranking event", "normal stage"])
+total_time = st.selectbox("Total Time:", [30, 40], index=0)
+
+names = [s["Name"] for s in skills]
+selected = st.multiselect("Select skills:", names, default=names[:2])
+sel = [s for s in skills if s["Name"] in selected]
+
+if sel:
+    plot_skills_alias(sel, total_time, mode)
 else:
-    st.info("スキルを選択してください。")
+    st.info("Please select at least one skill.")
