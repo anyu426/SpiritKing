@@ -1,10 +1,9 @@
 # ストリームリット用スキルCT比較アプリ
 import streamlit as st
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from matplotlib.colors import hsv_to_rgb
-from matplotlib.font_manager import FontProperties
+import pandas as pd
+import altair as alt
 import numpy as np
+
 
 
 # スキル定義
@@ -34,87 +33,75 @@ skills = [
     {"Name": "アルマゲドン", "CT": 4.75, "Effect Time": None}
 ]
 
-# 色と重複処理用
-def generate_distinct_colors(n):
-    hues = np.linspace(0, 1, n + 1)[:-1]
-    return [hsv_to_rgb((h, 0.6, 0.9)) for h in hues]
-
-def time_overlap(a1, b1, a2, b2):
-    return max(0, min(b1, b2) - max(a1, a2))
-
-# プロット関数（英語エイリアス）
-def plot_skills_alias(skills, total_time=30, mode="ranking event"):
-    fig, ax = plt.subplots(figsize=(12, 6))
-    colors = generate_distinct_colors(len(skills))
-    effect_ranges = [[] for _ in skills]
-    instant_times = {}
-    bar_height = 0.3
-
-    aliases = [f"Skill {i+1}" for i in range(len(skills))]
-
-    for i, skill in enumerate(skills):
-        ct = float(skill["CT"])
-        et = float(skill.get("Effect Time") or 0)
-        color = colors[i]
-        t = 0
-        while t <= total_time:
-            start = t + ct if mode == "ranking event" else t
-            end = start + et
-            if start > total_time:
-                break
-            if et > 0:
-                ax.add_patch(patches.Rectangle((start, i - bar_height/2), end - start, bar_height,
-                                               color=color, alpha=0.6))
-                effect_ranges[i].append((start, end))
-            else:
-                key = round(start, 2)
-                instant_times.setdefault(key, []).append(i)
-            t += ct
-
-    # overlap bars
-    for i in range(len(skills)):
-        for j in range(i+1, len(skills)):
-            for s1, e1 in effect_ranges[i]:
-                for s2, e2 in effect_ranges[j]:
-                    if time_overlap(s1, e1, s2, e2):
-                        o_s = max(s1, s2)
-                        o_e = min(e1, e2)
-                        for y in [i, j]:
-                            ax.add_patch(patches.Rectangle((o_s, y-bar_height/2), o_e-o_s, bar_height,
-                                                           color='red', alpha=0.8))
-
-    # instant skill lines
-    for key, idxs in instant_times.items():
-        for i in idxs:
-            overlaps = any(s <= key <= e for j, rng in enumerate(effect_ranges) if j != i for s, e in rng)
-            color = 'red' if len(idxs) > 1 else 'blue'
-            linestyle = ':' if overlaps else '-'
-            ax.plot([key, key], [i-bar_height/2, i+bar_height/2],
-                    color=color, linestyle=linestyle, linewidth=1.8, alpha=0.9)
-
-    ax.set_ylim(-1, len(skills))
-    ax.set_xlim(0, total_time)
-    ax.set_yticks(range(len(skills)))
-    ax.set_yticklabels(aliases)
-    ax.set_xlabel("Time (sec)")
-    ax.set_title(f"Skill CT Timeline ({mode})")
-    ax.grid(axis='x', linestyle='--', alpha=0.6)
-    st.pyplot(fig)
-
-    st.markdown("**Legend mapping:**")
-    for i, skill in enumerate(skills):
-        st.markdown(f"- **Skill {i+1}** = {skill['Name']}")
-
-# Streamlit UI
-st.title("Skill CT Timeline Comparison")
+# ユーザー選択UI
 mode = st.radio("Mode:", ["ranking event", "normal stage"])
-total_time = st.selectbox("Total Time:", [30, 40], index=0)
-
+total_time = st.selectbox("Total Time:", [30, 40])
 names = [s["Name"] for s in skills]
 selected = st.multiselect("Select skills:", names, default=names[:2])
-sel = [s for s in skills if s["Name"] in selected]
+skills = [s for s in skills if s["Name"] in selected]
 
-if sel:
-    plot_skills_alias(sel, total_time, mode)
-else:
+if not skills:
     st.info("Please select at least one skill.")
+    st.stop()
+
+# データ準備
+rows = []
+for idx, s in enumerate(skills):
+    alias = f"Skill {idx+1}"
+    ct, et = s["CT"], s.get("Effect Time") or 0
+    t = 0
+    while t <= total_time:
+        start = t + ct if mode=="ranking event" else t
+        end = start + et
+        if start > total_time:
+            break
+        rows.append({"alias": alias, "start": start, "end": end, "et": et})
+        t += ct
+
+df = pd.DataFrame(rows)
+
+# 重複判定
+def overlap_flag(r, df):
+    if r["et"]>0:
+        flag = ((df["alias"]!=r["alias"]) &
+                (df["start"]<r["end"]) & (df["end"]>r["start"])).any()
+        return flag
+    return False
+
+df["dup"] = df.apply(lambda r: overlap_flag(r, df), axis=1)
+
+# 即時スキルのデータ（エフェクト無）
+inst = []
+for r in rows:
+    if r["et"]==0:
+        inst.append({
+            "alias": r["alias"], "t": round(r["start"],2),
+            "dup": overlap_flag(r, df)
+        })
+df_inst = pd.DataFrame(inst)
+
+# Altair プロット
+base = alt.Chart(df).encode(
+    y=alt.Y('alias:N', sort=list(df['alias'].unique())),
+)
+
+bars = base.mark_bar(opacity=0.6).encode(
+    x='start:Q',
+    x2='end:Q',
+    color=alt.condition("datum.dup", alt.value('red'), alt.value('steelblue'))
+)
+
+inst_plots = alt.Chart(df_inst).mark_rule().encode(
+    x='t:Q',
+    y=alt.Y('alias:N', sort=list(df_inst['alias'].unique())),
+    color=alt.condition("datum.dup", alt.value('red'), alt.value('steelblue')),
+    size=alt.value(2)
+)
+
+chart = (bars + inst_plots).properties(width=700, height=50*len(skills))
+st.altair_chart(chart)
+
+# Mapping確認
+st.markdown("**Legend mapping:**")
+for i, s in enumerate(skills):
+    st.markdown(f"- **Skill {i+1}** = {s['Name']}")
