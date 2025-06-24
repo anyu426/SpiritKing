@@ -1,5 +1,3 @@
-streamlit
-matplotlib
-numpy
-os
-subprocess
+streamlit==1.25.0
+matplotlib==3.7.2
+numpy==1.24.4
