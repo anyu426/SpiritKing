@@ -18,11 +18,14 @@ Original file is located at
 """
 
 # IPAexゴシックフォントをダウンロードして有効化（Colab専用）
-!wget -q https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00301.zip
-!unzip -o ipaexg00301.zip
-!mkdir -p ~/.fonts
-!mv ipaexg00301/*.ttf ~/.fonts/
-!fc-cache -fv
+import subprocess
+
+# IPAフォントのダウンロード
+subprocess.run(["wget", "-q", "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00301.zip"])
+subprocess.run(["unzip", "-o", "ipaexg00301.zip"])
+subprocess.run(["cp", "ipaexg00301/ipaexg.ttf", "/usr/share/fonts/truetype/"])
+subprocess.run(["fc-cache", "-fv"])
+
 
 # フォントを明示的にMatplotlibに登録
 from matplotlib.font_manager import FontProperties
